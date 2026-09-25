@@ -2,12 +2,18 @@ import streamlit as st
 import sqlite3
 import pandas as pd
 import io
-import os
 from datetime import datetime, date
-import speech_recognition as sr
+
+# Optional voice package
+try:
+    import speech_recognition as sr
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+
 
 # =========================================================
-# CONFIG
+# APP CONFIG
 # =========================================================
 
 st.set_page_config(
@@ -17,20 +23,22 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-DB = "shoe_shop.db"
+DB_FILE = "shoe_shop.db"
+
 
 # =========================================================
 # DATABASE
 # =========================================================
 
-def get_db():
-    conn = sqlite3.connect(DB, check_same_thread=False)
+def get_connection():
+    conn = sqlite3.connect(DB_FILE, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-def init_db():
-    conn = get_db()
+def init_database():
+
+    conn = get_connection()
     cur = conn.cursor()
 
     cur.execute("""
@@ -65,10 +73,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS sales (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             customer_id INTEGER,
-            subtotal REAL,
-            discount REAL,
-            tax REAL,
-            total REAL,
+            subtotal REAL DEFAULT 0,
+            discount REAL DEFAULT 0,
+            tax REAL DEFAULT 0,
+            total REAL DEFAULT 0,
             payment_method TEXT,
             created_at TEXT
         )
@@ -91,7 +99,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS expenses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT,
-            amount REAL,
+            amount REAL DEFAULT 0,
             category TEXT,
             created_at TEXT
         )
@@ -101,69 +109,106 @@ def init_db():
     conn.close()
 
 
-init_db()
+init_database()
+
 
 # =========================================================
-# HELPERS
+# GENERAL FUNCTIONS
 # =========================================================
 
-def query_df(sql, params=()):
-    conn = get_db()
-    df = pd.read_sql_query(sql, conn, params=params)
-    conn.close()
-    return df
+def fetch_df(query, params=()):
+
+    conn = get_connection()
+
+    try:
+        return pd.read_sql_query(
+            query,
+            conn,
+            params=params
+        )
+    finally:
+        conn.close()
 
 
-def execute(sql, params=()):
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    conn.commit()
-    last_id = cur.lastrowid
-    conn.close()
-    return last_id
+def execute_query(query, params=()):
 
+    conn = get_connection()
 
-def normalize(text):
-    return str(text).strip().lower()
+    try:
+        cur = conn.cursor()
+        cur.execute(query, params)
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def money(value):
     return f"Rs. {float(value):,.0f}"
 
 
+def clean_text(value):
+    return str(value).strip().lower()
+
+
 # =========================================================
-# DEMO PRODUCTS - 100 PRODUCTS
+# DEMO DATA
 # =========================================================
 
-def add_100_products():
+def add_demo_products():
+
     brands = [
-        "Nike", "Adidas", "Puma", "Skechers", "Bata",
-        "Servis", "Hush Puppies", "UrbanStep", "WalkPro", "RoyalFeet"
+        "Nike",
+        "Adidas",
+        "Puma",
+        "Skechers",
+        "Bata",
+        "Servis",
+        "Hush Puppies",
+        "UrbanStep",
+        "WalkPro",
+        "RoyalFeet"
     ]
 
     categories = [
-        "Running", "Casual", "Formal", "Sports",
-        "Sneakers", "Sandals", "School", "Boots"
+        "Running",
+        "Casual",
+        "Formal",
+        "Sports",
+        "Sneakers",
+        "Sandals",
+        "School",
+        "Boots"
     ]
 
     colors = [
-        "Black", "White", "Blue", "Red", "Brown",
-        "Grey", "Green", "Navy"
+        "Black",
+        "White",
+        "Blue",
+        "Red",
+        "Brown",
+        "Grey",
+        "Green",
+        "Navy"
     ]
 
     sizes = [
-        "38", "39", "40", "41", "42", "43", "44"
+        "38",
+        "39",
+        "40",
+        "41",
+        "42",
+        "43",
+        "44"
     ]
 
-    conn = get_db()
+    conn = get_connection()
     cur = conn.cursor()
 
-    existing = cur.execute(
-        "SELECT COUNT(*) FROM products"
-    ).fetchone()[0]
+    added = 0
 
     for i in range(1, 101):
+
         brand = brands[(i - 1) % len(brands)]
         category = categories[(i - 1) % len(categories)]
         color = colors[(i - 1) % len(colors)]
@@ -173,17 +218,25 @@ def add_100_products():
         sku = f"SHOE-{i:04d}"
         barcode = f"8901000{i:05d}"
 
-        purchase = 1800 + ((i * 137) % 4500)
-        sale = purchase + 1000 + ((i * 71) % 2500)
-        stock = 5 + (i % 26)
+        purchase = 1800 + ((i * 127) % 4000)
+        sale = purchase + 900 + ((i * 83) % 2500)
+        stock = 5 + (i % 20)
 
         try:
+
             cur.execute("""
-                INSERT INTO products
-                (
-                    name, brand, category, size, color,
-                    sku, barcode, purchase_price,
-                    sale_price, stock, created_at
+                INSERT INTO products (
+                    name,
+                    brand,
+                    category,
+                    size,
+                    color,
+                    sku,
+                    barcode,
+                    purchase_price,
+                    sale_price,
+                    stock,
+                    created_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
@@ -199,43 +252,25 @@ def add_100_products():
                 stock,
                 datetime.now().isoformat()
             ))
+
+            added += 1
+
         except sqlite3.IntegrityError:
             pass
 
     conn.commit()
     conn.close()
 
-
-# =========================================================
-# VOICE SEARCH
-# =========================================================
-
-def voice_to_text(audio_bytes, language="en-US"):
-    try:
-        recognizer = sr.Recognizer()
-
-        audio_file = sr.AudioFile(io.BytesIO(audio_bytes))
-
-        with audio_file as source:
-            audio = recognizer.record(source)
-
-        text = recognizer.recognize_google(
-            audio,
-            language=language
-        )
-
-        return text
-
-    except Exception:
-        return ""
+    return added
 
 
 # =========================================================
-# PRODUCT SEARCH
+# SEARCH
 # =========================================================
 
-def search_products(search_text):
-    products = query_df("""
+def search_products(search):
+
+    products = fetch_df("""
         SELECT *
         FROM products
         ORDER BY id DESC
@@ -244,12 +279,12 @@ def search_products(search_text):
     if products.empty:
         return products
 
-    search_text = normalize(search_text)
+    search = clean_text(search)
 
-    if not search_text:
+    if not search:
         return products
 
-    searchable_columns = [
+    columns = [
         "name",
         "brand",
         "category",
@@ -259,67 +294,121 @@ def search_products(search_text):
         "barcode"
     ]
 
-    # Full phrase search
-    mask = False
+    mask = pd.Series(
+        False,
+        index=products.index
+    )
 
-    for column in searchable_columns:
-        mask = mask | products[column].fillna("").astype(str).str.lower().str.contains(
-            search_text,
-            regex=False
+    for column in columns:
+
+        mask = mask | (
+            products[column]
+            .fillna("")
+            .astype(str)
+            .str.lower()
+            .str.contains(
+                search,
+                regex=False
+            )
         )
 
     results = products[mask]
 
-    # Token-based flexible search
+    # Token search
     if results.empty:
-        tokens = search_text.split()
 
-        if tokens:
-            combined = products[searchable_columns].fillna("").astype(str).agg(
-                " ".join,
-                axis=1
-            ).str.lower()
+        words = search.split()
 
-            token_mask = combined.apply(
-                lambda x: all(token in x for token in tokens)
+        combined = products[
+            columns
+        ].fillna("").astype(str).agg(
+            " ".join,
+            axis=1
+        ).str.lower()
+
+        token_mask = combined.apply(
+            lambda x: all(
+                word in x
+                for word in words
             )
+        )
 
-            results = products[token_mask]
+        results = products[token_mask]
 
     return results
 
 
 # =========================================================
-# CART
+# VOICE SEARCH
+# =========================================================
+
+def recognize_voice(audio_bytes, language):
+
+    if not VOICE_AVAILABLE:
+        return ""
+
+    try:
+
+        recognizer = sr.Recognizer()
+
+        audio_file = sr.AudioFile(
+            io.BytesIO(audio_bytes)
+        )
+
+        with audio_file as source:
+
+            audio = recognizer.record(source)
+
+        result = recognizer.recognize_google(
+            audio,
+            language=language
+        )
+
+        return result
+
+    except Exception:
+        return ""
+
+
+# =========================================================
+# SESSION STATE
 # =========================================================
 
 if "cart" not in st.session_state:
     st.session_state.cart = []
 
-if "voice_query" not in st.session_state:
-    st.session_state.voice_query = ""
+if "search_text" not in st.session_state:
+    st.session_state.search_text = ""
 
 
 def add_to_cart(product_id):
-    product = query_df(
-        "SELECT * FROM products WHERE id = ?",
-        (product_id,)
-    )
 
-    if product.empty:
+    conn = get_connection()
+
+    row = conn.execute("""
+        SELECT *
+        FROM products
+        WHERE id = ?
+    """, (product_id,)).fetchone()
+
+    conn.close()
+
+    if row is None:
         return
 
-    row = product.iloc[0]
-
     for item in st.session_state.cart:
+
         if item["id"] == product_id:
-            if item["quantity"] < int(row["stock"]):
+
+            if item["quantity"] < row["stock"]:
                 item["quantity"] += 1
+
             return
 
-    if int(row["stock"]) > 0:
+    if row["stock"] > 0:
+
         st.session_state.cart.append({
-            "id": int(row["id"]),
+            "id": row["id"],
             "name": row["name"],
             "sku": row["sku"],
             "size": row["size"],
@@ -329,7 +418,8 @@ def add_to_cart(product_id):
         })
 
 
-def cart_subtotal():
+def cart_total():
+
     return sum(
         item["price"] * item["quantity"]
         for item in st.session_state.cart
@@ -344,12 +434,14 @@ with st.sidebar:
 
     st.markdown("# 👟 ShoeShop Pro")
 
-    st.caption("Professional Shoe Shop POS")
+    st.caption(
+        "Professional Shoe Shop POS"
+    )
 
     st.divider()
 
     page = st.radio(
-        "Navigation",
+        "MAIN MENU",
         [
             "📊 Dashboard",
             "🛒 POS",
@@ -363,15 +455,27 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### Quick Actions")
+    st.markdown("### ⚡ Quick Action")
 
     if st.button(
         "➕ Add 100 Demo Products",
         use_container_width=True
     ):
-        add_100_products()
-        st.success("100 products processed successfully!")
+
+        number = add_demo_products()
+
+        st.success(
+            f"{number} products added."
+        )
+
         st.rerun()
+
+    st.divider()
+
+    st.caption(
+        "ShoeShop Pro v1.0"
+    )
+
 
 # =========================================================
 # DASHBOARD
@@ -381,28 +485,32 @@ if page == "📊 Dashboard":
 
     st.title("📊 Dashboard")
 
+    st.write(
+        "Welcome to ShoeShop Pro."
+    )
+
     today = date.today().isoformat()
 
-    sales_today = query_df("""
+    today_data = fetch_df("""
         SELECT
-            COALESCE(SUM(total), 0) AS total,
+            COALESCE(SUM(total), 0) AS sales,
             COUNT(*) AS invoices
         FROM sales
         WHERE DATE(created_at) = ?
     """, (today,))
 
-    products = query_df("""
-        SELECT COUNT(*) AS count
+    product_count = fetch_df("""
+        SELECT COUNT(*) AS total
         FROM products
     """)
 
-    stock = query_df("""
-        SELECT COALESCE(SUM(stock), 0) AS stock
+    stock_count = fetch_df("""
+        SELECT COALESCE(SUM(stock), 0) AS total
         FROM products
     """)
 
-    low_stock = query_df("""
-        SELECT COUNT(*) AS count
+    low_stock = fetch_df("""
+        SELECT COUNT(*) AS total
         FROM products
         WHERE stock <= 5
     """)
@@ -411,32 +519,33 @@ if page == "📊 Dashboard":
 
     c1.metric(
         "Today's Sales",
-        money(sales_today.iloc[0]["total"])
+        money(today_data.iloc[0]["sales"])
     )
 
     c2.metric(
         "Invoices",
-        int(sales_today.iloc[0]["invoices"])
+        int(today_data.iloc[0]["invoices"])
     )
 
     c3.metric(
-        "Products",
-        int(products.iloc[0]["count"])
+        "Total Products",
+        int(product_count.iloc[0]["total"])
     )
 
     c4.metric(
         "Low Stock",
-        int(low_stock.iloc[0]["count"])
+        int(low_stock.iloc[0]["total"])
     )
 
     st.divider()
 
-    col1, col2 = st.columns(2)
+    left, right = st.columns(2)
 
-    with col1:
-        st.subheader("📦 Inventory")
+    with left:
 
-        inventory = query_df("""
+        st.subheader("📦 Stock Overview")
+
+        inventory = fetch_df("""
             SELECT
                 brand,
                 COUNT(*) AS products,
@@ -446,17 +555,25 @@ if page == "📊 Dashboard":
             ORDER BY units DESC
         """)
 
-        if not inventory.empty:
+        if inventory.empty:
+
+            st.info(
+                "No products yet. Use 'Add 100 Demo Products'."
+            )
+
+        else:
+
             st.dataframe(
                 inventory,
                 use_container_width=True,
                 hide_index=True
             )
 
-    with col2:
-        st.subheader("⚠️ Low Stock Products")
+    with right:
 
-        low = query_df("""
+        st.subheader("⚠️ Low Stock")
+
+        low = fetch_df("""
             SELECT
                 name,
                 brand,
@@ -470,13 +587,48 @@ if page == "📊 Dashboard":
         """)
 
         if low.empty:
-            st.success("No low-stock products.")
+
+            st.success(
+                "No low-stock products."
+            )
+
         else:
+
             st.dataframe(
                 low,
                 use_container_width=True,
                 hide_index=True
             )
+
+    st.divider()
+
+    st.subheader("💰 Recent Sales")
+
+    recent = fetch_df("""
+        SELECT
+            id AS invoice,
+            total,
+            payment_method,
+            created_at
+        FROM sales
+        ORDER BY id DESC
+        LIMIT 10
+    """)
+
+    if recent.empty:
+
+        st.info(
+            "No sales yet."
+        )
+
+    else:
+
+        st.dataframe(
+            recent,
+            use_container_width=True,
+            hide_index=True
+        )
+
 
 # =========================================================
 # POS
@@ -486,93 +638,93 @@ elif page == "🛒 POS":
 
     st.title("🛒 Point of Sale")
 
-    # -----------------------------------------------------
-    # VOICE
-    # -----------------------------------------------------
+    st.markdown(
+        "### 🔎 Search your product"
+    )
 
-    col1, col2 = st.columns([3, 1])
+    col1, col2 = st.columns(
+        [4, 1]
+    )
 
     with col1:
 
-        st.markdown("### 🔎 Search Product")
-
-        search_language = st.selectbox(
-            "Voice language",
-            [
-                "English",
-                "Urdu"
-            ],
-            horizontal=True
+        search = st.text_input(
+            "Product Name / Brand / SKU / Barcode / Size",
+            value=st.session_state.search_text,
+            placeholder="Example: Nike, Running, 42, SHOE-0001"
         )
 
-        language_code = (
-            "ur-PK"
-            if search_language == "Urdu"
-            else "en-US"
-        )
+        st.session_state.search_text = search
 
     with col2:
 
-        st.markdown("### 🎙️ Voice")
-
-        audio = st.audio_input(
-            "Speak Product Name",
-            key="voice_search"
+        language = st.selectbox(
+            "Voice Language",
+            [
+                "English",
+                "Urdu"
+            ]
         )
 
-    if audio is not None:
+        if VOICE_AVAILABLE:
 
-        transcript = voice_to_text(
-            audio.getvalue(),
-            language_code
-        )
-
-        if transcript:
-
-            st.session_state.voice_query = transcript
-
-            st.success(
-                f"Voice search: {transcript}"
+            audio = st.audio_input(
+                "🎙️ Speak",
+                key="voice_input"
             )
+
+            if audio is not None:
+
+                lang = (
+                    "ur-PK"
+                    if language == "Urdu"
+                    else "en-US"
+                )
+
+                voice_text = recognize_voice(
+                    audio.getvalue(),
+                    lang
+                )
+
+                if voice_text:
+
+                    st.session_state.search_text = voice_text
+
+                    st.success(
+                        f"Voice: {voice_text}"
+                    )
+
+                    st.rerun()
 
         else:
 
             st.warning(
-                "Voice could not be recognized. Please try again."
+                "SpeechRecognition is not installed."
             )
 
-    search_query = st.text_input(
-        "Product name / Brand / SKU / Barcode / Size",
-        value=st.session_state.voice_query,
-        placeholder="Example: Nike Air Max or Nike",
-        key="product_search"
+    results = search_products(
+        st.session_state.search_text
     )
 
-    # -----------------------------------------------------
-    # PRODUCTS
-    # -----------------------------------------------------
-
-    results = search_products(search_query)
-
-    st.markdown(
-        f"### Products Found: {len(results)}"
+    st.write(
+        f"**{len(results)} products found**"
     )
 
     if results.empty:
 
         st.info(
-            "No products found. Add products from the Products section."
+            "No product found."
         )
 
     else:
 
         for _, product in results.head(100).iterrows():
 
-            col1, col2, col3, col4, col5, col6 = st.columns(
-                [3, 1.3, 1, 1, 1, 1]
+            c1, c2, c3, c4, c5, c6 = st.columns(
+                [3, 1, 1, 1, 1, 1]
             )
 
-            with col1:
+            with c1:
 
                 st.markdown(
                     f"**{product['name']}**"
@@ -581,35 +733,38 @@ elif page == "🛒 POS":
                 st.caption(
                     f"{product['brand']} • "
                     f"{product['category']} • "
-                    f"SKU: {product['sku']}"
+                    f"{product['sku']}"
                 )
 
-            with col2:
+            with c2:
+
                 st.write(
                     f"Size: {product['size']}"
                 )
 
-            with col3:
+            with c3:
+
                 st.write(
                     f"Stock: {product['stock']}"
                 )
 
-            with col4:
+            with c4:
+
                 st.write(
                     money(product["sale_price"])
                 )
 
-            with col5:
+            with c5:
+
                 st.write(
                     product["color"]
                 )
 
-            with col6:
+            with c6:
 
                 if st.button(
-                    "Add",
-                    key=f"add_{product['id']}",
-                    use_container_width=True
+                    "ADD",
+                    key=f"cart_{product['id']}"
                 ):
 
                     add_to_cart(
@@ -620,78 +775,75 @@ elif page == "🛒 POS":
 
     st.divider()
 
-    # -----------------------------------------------------
-    # CART
-    # -----------------------------------------------------
-
-    st.subheader("🛍️ Current Cart")
+    st.subheader("🛍️ Cart")
 
     if not st.session_state.cart:
 
-        st.info("Cart is empty.")
+        st.info(
+            "Cart is empty."
+        )
 
     else:
-
-        total = 0
 
         for index, item in enumerate(
             st.session_state.cart
         ):
 
-            col1, col2, col3, col4, col5 = st.columns(
+            c1, c2, c3, c4, c5 = st.columns(
                 [3, 1, 1, 1, 1]
             )
 
-            with col1:
+            with c1:
                 st.write(item["name"])
 
-            with col2:
+            with c2:
                 st.write(
                     money(item["price"])
                 )
 
-            with col3:
+            with c3:
 
-                quantity = st.number_input(
+                qty = st.number_input(
                     "Qty",
                     min_value=1,
                     max_value=100,
                     value=item["quantity"],
-                    key=f"qty_{index}"
+                    key=f"quantity_{index}"
                 )
 
-                item["quantity"] = quantity
+                item["quantity"] = qty
 
-            with col4:
+            with c4:
 
-                line_total = (
-                    item["price"] *
-                    item["quantity"]
+                total = (
+                    item["price"]
+                    * item["quantity"]
                 )
 
                 st.write(
-                    money(line_total)
+                    money(total)
                 )
 
-                total += line_total
-
-            with col5:
+            with c5:
 
                 if st.button(
-                    "❌",
+                    "Remove",
                     key=f"remove_{index}"
                 ):
 
-                    st.session_state.cart.pop(index)
+                    st.session_state.cart.pop(
+                        index
+                    )
+
                     st.rerun()
 
         st.divider()
 
-        subtotal = cart_subtotal()
+        subtotal = cart_total()
 
-        col1, col2, col3 = st.columns(3)
+        c1, c2, c3 = st.columns(3)
 
-        with col1:
+        with c1:
 
             discount = st.number_input(
                 "Discount",
@@ -700,7 +852,7 @@ elif page == "🛒 POS":
                 step=100.0
             )
 
-        with col2:
+        with c2:
 
             tax_percent = st.number_input(
                 "Tax %",
@@ -709,10 +861,10 @@ elif page == "🛒 POS":
                 step=1.0
             )
 
-        with col3:
+        with c3:
 
-            payment_method = st.selectbox(
-                "Payment",
+            payment = st.selectbox(
+                "Payment Method",
                 [
                     "Cash",
                     "Card",
@@ -723,20 +875,23 @@ elif page == "🛒 POS":
                 ]
             )
 
+        taxable = max(
+            subtotal - discount,
+            0
+        )
+
         tax = (
-            max(subtotal - discount, 0)
+            taxable
             * tax_percent
             / 100
         )
 
         grand_total = (
-            subtotal
-            - discount
-            + tax
+            taxable + tax
         )
 
         st.markdown(
-            f"## Total: {money(grand_total)}"
+            f"# Total: {money(grand_total)}"
         )
 
         if st.button(
@@ -745,36 +900,37 @@ elif page == "🛒 POS":
             use_container_width=True
         ):
 
-            conn = get_db()
+            conn = get_connection()
             cur = conn.cursor()
 
             try:
 
-                # Check stock first
+                # Check stock
                 for item in st.session_state.cart:
 
-                    stock_row = cur.execute(
-                        """
+                    stock = cur.execute("""
                         SELECT stock
                         FROM products
                         WHERE id = ?
-                        """,
-                        (item["id"],)
-                    ).fetchone()
+                    """, (
+                        item["id"],
+                    )).fetchone()
 
-                    if not stock_row:
+                    if stock is None:
+
                         raise Exception(
                             f"Product not found: {item['name']}"
                         )
 
-                    if stock_row["stock"] < item["quantity"]:
+                    if stock["stock"] < item["quantity"]:
+
                         raise Exception(
-                            f"Insufficient stock: {item['name']}"
+                            f"Not enough stock: {item['name']}"
                         )
 
+                # Create invoice
                 cur.execute("""
-                    INSERT INTO sales
-                    (
+                    INSERT INTO sales (
                         subtotal,
                         discount,
                         tax,
@@ -788,22 +944,22 @@ elif page == "🛒 POS":
                     discount,
                     tax,
                     grand_total,
-                    payment_method,
+                    payment,
                     datetime.now().isoformat()
                 ))
 
                 sale_id = cur.lastrowid
 
+                # Sale items
                 for item in st.session_state.cart:
 
                     line_total = (
-                        item["price"] *
-                        item["quantity"]
+                        item["price"]
+                        * item["quantity"]
                     )
 
                     cur.execute("""
-                        INSERT INTO sale_items
-                        (
+                        INSERT INTO sale_items (
                             sale_id,
                             product_id,
                             product_name,
@@ -812,52 +968,4 @@ elif page == "🛒 POS":
                             cost,
                             total
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        sale_id,
-                        item["id"],
-                        item["name"],
-                        item["quantity"],
-                        item["price"],
-                        item["cost"],
-                        line_total
-                    ))
-
-                    cur.execute("""
-                        UPDATE products
-                        SET stock = stock - ?
-                        WHERE id = ?
-                    """, (
-                        item["quantity"],
-                        item["id"]
-                    ))
-
-                conn.commit()
-
-                st.session_state.cart = []
-
-                st.success(
-                    f"Sale completed! Invoice #{sale_id}"
-                )
-
-                st.balloons()
-
-            except Exception as e:
-
-                conn.rollback()
-
-                st.error(str(e))
-
-            finally:
-
-                conn.close()
-
-# =========================================================
-# PRODUCTS
-# =========================================================
-
-elif page == "👟 Products":
-
-    st.title("👟 Product & Inventory Management")
-
-    tabs
+                        VALUE
