@@ -958,8 +958,8 @@ elif page == "🛒 POS":
                         * item["quantity"]
                     )
 
-                    cur.execute(""")
-                        INSERT INTO sale_items (
+                    cur.execute("""
+                        INSERT INTO sale_items ()
                             sale_id,
                             product_id,
                             product_name,
