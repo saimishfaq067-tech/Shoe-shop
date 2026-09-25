@@ -963,4 +963,4 @@ if st.session_state.page == "Dashboard":
 
                 st.warning(
                     f"{len(low_stock)} "
-                    "product(s)
+                    "product(s
