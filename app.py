@@ -840,4 +840,5 @@ elif page == "POS Billing":
                         receipt += (
                             f"{item['name']} | "
                             f"{item['qty']} x "
+        )
                            
